@@ -19,3 +19,6 @@ dependencies.lock
 frontend/node_modules
 *.old
 /node_modules
+
+# local Wi-Fi credentials
+main/db_credentials.h

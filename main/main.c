@@ -40,61 +40,59 @@
 #include "mdns.h"
 #include "db_esp_now.h"
 #include "iot_button.h"
+#include "button_gpio.h"
 #include "db_serial.h"
 #include "globals.h"
+#if __has_include("db_credentials.h")
+#include "db_credentials.h"  // local Wi-Fi credentials, not in git - see db_credentials.h.example
+#else
+#warning "main/db_credentials.h not found - using DroneBridge default Wi-Fi credentials"
+#define DB_DEFAULT_WIFI_SSID "DroneBridge for ESP32"
+#define DB_DEFAULT_WIFI_PWD "dronebridge"
+#endif
 
 #define NVS_NAMESPACE "settings"
 
 /* used to reset ESP to defaults and force restart or to reset the mode to access point mode */
-#ifdef CONFIG_IDF_TARGET_ESP32C3
-#define DB_RESET_PIN GPIO_NUM_9
-#elif CONFIG_IDF_TARGET_ESP32C6
-#define DB_RESET_PIN GPIO_NUM_9
-#elif CONFIG_IDF_TARGET_ESP32S2
-#define DB_RESET_PIN GPIO_NUM_0
-#elif CONFIG_IDF_TARGET_ESP32S3
-#define DB_RESET_PIN GPIO_NUM_0
-#elif CONFIG_IDF_TARGET_ESP32
-#define DB_RESET_PIN GPIO_NUM_0
-#else
-#define DB_RESET_PIN GPIO_NUM_0
-#endif
 
-#ifdef CONFIG_DB_OFFICIAL_BOARD_1_X
-#define DB_DEFAULT_UART_TX_PIN GPIO_NUM_5
-#define DB_DEFAULT_UART_RX_PIN GPIO_NUM_4
-#define DB_DEFAULT_UART_RTS_PIN GPIO_NUM_6
-#define DB_DEFAULT_UART_CTS_PIN GPIO_NUM_7
-#define DB_DEFAULT_UART_BAUD_RATE 115200
-#elif CONFIG_DB_OFFICIAL_BOARD_1_X_C6
-#define DB_DEFAULT_UART_TX_PIN GPIO_NUM_21
-#define DB_DEFAULT_UART_RX_PIN GPIO_NUM_2
-#define DB_DEFAULT_UART_RTS_PIN GPIO_NUM_22
-#define DB_DEFAULT_UART_CTS_PIN GPIO_NUM_23
-#define DB_DEFAULT_UART_BAUD_RATE 115200
-#elif CONFIG_DB_GENERIC_BOARD
-// initially set pins to 0 to allow the start of the system on all boards. User has to set the correct pins
-#define DB_DEFAULT_UART_TX_PIN GPIO_NUM_0
-#define DB_DEFAULT_UART_RX_PIN GPIO_NUM_0
-#define DB_DEFAULT_UART_RTS_PIN GPIO_NUM_0
-#define DB_DEFAULT_UART_CTS_PIN GPIO_NUM_0
-#define DB_DEFAULT_UART_BAUD_RATE 57600
-#else
-// someone fucked up the config - fallback to generic config
-#define DB_DEFAULT_UART_TX_PIN GPIO_NUM_0
-#define DB_DEFAULT_UART_RX_PIN GPIO_NUM_0
-#define DB_DEFAULT_UART_RTS_PIN GPIO_NUM_0
-#define DB_DEFAULT_UART_CTS_PIN GPIO_NUM_0
-#define DB_DEFAULT_UART_BAUD_RATE 57600
-#endif
+#define DB_RESET_PIN GPIO_NUM_9
+
+
+// #ifdef CONFIG_DB_OFFICIAL_BOARD_1_X
+// #define DB_DEFAULT_UART_TX_PIN GPIO_NUM_5
+// #define DB_DEFAULT_UART_RX_PIN GPIO_NUM_4
+// #define DB_DEFAULT_UART_RTS_PIN GPIO_NUM_6
+// #define DB_DEFAULT_UART_CTS_PIN GPIO_NUM_7
+// #define DB_DEFAULT_UART_BAUD_RATE 115200
+// #elif CONFIG_DB_OFFICIAL_BOARD_1_X_C6
+// #define DB_DEFAULT_UART_TX_PIN GPIO_NUM_21
+// #define DB_DEFAULT_UART_RX_PIN GPIO_NUM_2
+// #define DB_DEFAULT_UART_RTS_PIN GPIO_NUM_22
+// #define DB_DEFAULT_UART_CTS_PIN GPIO_NUM_23
+// #define DB_DEFAULT_UART_BAUD_RATE 115200
+// #elif CONFIG_DB_GENERIC_BOARD
+// // initially set pins to 0 to allow the start of the system on all boards. User has to set the correct pins
+// #define DB_DEFAULT_UART_TX_PIN GPIO_NUM_0
+// #define DB_DEFAULT_UART_RX_PIN GPIO_NUM_0
+// #define DB_DEFAULT_UART_RTS_PIN GPIO_NUM_0
+// #define DB_DEFAULT_UART_CTS_PIN GPIO_NUM_0
+// #define DB_DEFAULT_UART_BAUD_RATE 57600
+// #else
+// // someone fucked up the config - fallback to generic config
+// #define DB_DEFAULT_UART_TX_PIN GPIO_NUM_0
+// #define DB_DEFAULT_UART_RX_PIN GPIO_NUM_0
+// #define DB_DEFAULT_UART_RTS_PIN GPIO_NUM_0
+// #define DB_DEFAULT_UART_CTS_PIN GPIO_NUM_0
+// #define DB_DEFAULT_UART_BAUD_RATE 57600
+// #endif
 
 static const char *TAG = "DB_ESP32";
 
 /* DroneBridge Parameters */
-uint8_t DB_RADIO_MODE = DB_WIFI_MODE_AP;
-uint8_t DB_RADIO_MODE_DESIGNATED = DB_WIFI_MODE_AP;  // initially assign the same value as DB_RADIO_MODE
-uint8_t DB_WIFI_SSID[32] = "DroneBridge for ESP32";
-uint8_t DB_WIFI_PWD[64] = "dronebridge";
+uint8_t DB_RADIO_MODE = DB_WIFI_MODE_STA;
+uint8_t DB_RADIO_MODE_DESIGNATED = DB_WIFI_MODE_STA;  // initially assign the same value as DB_RADIO_MODE
+uint8_t DB_WIFI_SSID[32] = DB_DEFAULT_WIFI_SSID;
+uint8_t DB_WIFI_PWD[64] = DB_DEFAULT_WIFI_PWD;
 char DEFAULT_AP_IP[IP4ADDR_STRLEN_MAX] = "192.168.2.1";
 char DB_STATIC_STA_IP[IP4ADDR_STRLEN_MAX] = "";
 char DB_STATIC_STA_IP_GW[IP4ADDR_STRLEN_MAX] = "";
@@ -102,14 +100,21 @@ char DB_STATIC_STA_IP_NETMASK[IP4ADDR_STRLEN_MAX] = "";
 char CURRENT_CLIENT_IP[IP4ADDR_STRLEN_MAX] = "192.168.2.1";
 uint8_t DB_WIFI_CHANNEL = 6;
 uint8_t DB_SERIAL_PROTOCOL = DB_SERIAL_PROTOCOL_MAVLINK;
+
 uint8_t DB_DISABLE_RADIO_ARMED = false;
-uint8_t DB_UART_PIN_TX = DB_DEFAULT_UART_TX_PIN;
-uint8_t DB_UART_PIN_RX = DB_DEFAULT_UART_RX_PIN;
-uint8_t DB_UART_PIN_RTS = DB_DEFAULT_UART_RTS_PIN;
-uint8_t DB_UART_PIN_CTS = DB_DEFAULT_UART_CTS_PIN;
+#ifdef CONFIG_IDF_TARGET_ESP32C61
+// ESP32-C61: GPIO 14-21 are the SPI flash/PSRAM bus, use UART0 pins (console moved to USB-Serial-JTAG)
+uint8_t DB_UART_PIN_TX = 11;
+uint8_t DB_UART_PIN_RX = 10;
+#else
+uint8_t DB_UART_PIN_TX = 21;
+uint8_t DB_UART_PIN_RX = 20;
+#endif
+uint8_t DB_UART_PIN_RTS = GPIO_NUM_0;
+uint8_t DB_UART_PIN_CTS = GPIO_NUM_0;
 uint8_t DB_UART_RTS_THRESH = 64;
-int32_t DB_UART_BAUD_RATE = DB_DEFAULT_UART_BAUD_RATE;
-uint16_t DB_TRANS_BUF_SIZE = 128;
+int32_t DB_UART_BAUD_RATE = 115200;
+uint16_t DB_TRANS_BUF_SIZE = 512;
 uint8_t DB_LTM_FRAME_NUM_BUFFER = 2;
 uint8_t DB_EN_EXT_ANT = false;
 uint8_t DB_WIFI_EN_GN = false;
@@ -211,27 +216,27 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
     }
     // Wifi client mode events
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        ESP_LOGI(TAG, "WIFI_EVENT_STA_START - Wifi Started");
-        if (!DB_WIFI_IS_OFF) {  // maybe the other task did set it in the meantime
-            ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_connect());
-        } else {
-            ESP_LOGW(TAG, "Did not start Wi-Fi since autopilot told us he is armed (WIFI_EVENT_STA_START)");
-        }
+        ESP_LOGI(TAG, "WIFI_EVENT - Wifi Started");
+        ESP_ERROR_CHECK(esp_wifi_connect());
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
         set_client_static_ip();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGI(TAG, "WIFI_EVENT_STA_DISCONNECTED - Lost connection to access point");
-        // Keep on trying
-        if (!DB_WIFI_IS_OFF) {
-            ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_connect());
-            s_retry_num++;
-            ESP_LOGI(TAG, "Retry to connect to the AP (%i)", s_retry_num);
-        } else {
-            ESP_LOGD(TAG, "WIFI_EVENT_STA_DISCONNECTED - did not try to re-connect since WiFi was commanded off");
-        }
+        ESP_LOGI(TAG, "WIFI_EVENT - Lost connection to access point");
+        // Disabled failsafe - keep on trying
+        ESP_ERROR_CHECK(esp_wifi_connect());
+        s_retry_num++;
+        ESP_LOGI(TAG, "Retry to connect to the AP (%i)", s_retry_num);
+//        if (s_retry_num < WIFI_ESP_MAXIMUM_RETRY) {
+//            ESP_ERROR_CHECK(esp_wifi_connect());
+//            s_retry_num++;
+//            ESP_LOGI(TAG, "Retry to connect to the AP (%i/%i)", s_retry_num, WIFI_ESP_MAXIMUM_RETRY);
+//        } else {
+//            ESP_LOGI(TAG,"Connecting to the AP failed");
+//            xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+//        }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
-        ESP_LOGI(TAG, "IP_EVENT_STA_GOT_IP:" IPSTR, IP2STR(&event->ip_info.ip));
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        ESP_LOGI(TAG, "WIFI_EVENT - Got IP:" IPSTR, IP2STR(&event->ip_info.ip));
         sprintf(CURRENT_CLIENT_IP, IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
@@ -666,11 +671,15 @@ void db_read_settings_nvs() {
  * Sets mode to WiFi access point mode with default password "dronebridge" so user can check/change the config
  * @param arg
  */
-void short_press_callback(void *arg, void *usr_data) {
-    ESP_LOGW(TAG, "Short press detected setting wifi mode to access point with password: dronebridge");
-    DB_RADIO_MODE_DESIGNATED = DB_WIFI_MODE_AP;  // do not directly change DB_RADIO_MODE since it is not safe and constantly processed by other tasks. Save settings and reboot will assign DB_RADIO_MODE_DESIGNATED to DB_RADIO_MODE.
-    strncpy((char *) DB_WIFI_SSID, "DroneBridge for ESP32", sizeof(DB_WIFI_SSID) - 1);
-    strncpy((char *) DB_WIFI_PWD, "dronebridge", sizeof(DB_WIFI_PWD) - 1);
+void short_press_callback(void *arg,void *usr_data) {
+    //ESP_LOGW(TAG, "Short press detected setting wifi mode to station with password: dronebridge");
+    DB_RADIO_MODE_DESIGNATED = DB_WIFI_MODE_STA;  // do not directly change DB_WIFI_MODE since it is not safe and constantly processed by other tasks. Save settings and reboot will assign DB_WIFI_MODE_DESIGNATED to DB_WIFI_MODE.
+    strncpy((char *) DB_WIFI_SSID, DB_DEFAULT_WIFI_SSID, sizeof(DB_WIFI_SSID) - 1);
+    strncpy((char *) DB_WIFI_PWD, DB_DEFAULT_WIFI_PWD, sizeof(DB_WIFI_PWD) - 1);
+    // struct db_udp_client_t new_udp_client = {
+    //     .udp_client = new_sockaddr,
+    //     .mac = {0, 0, 0, 0, 0, 0}   // dummy MAC
+    // };
     db_write_settings_to_nvs();
     esp_restart();
 }
@@ -680,51 +689,31 @@ void short_press_callback(void *arg, void *usr_data) {
  * Resets all settings to defaults.
  * @param arg
  */
-void long_press_callback(void *arg, void *usr_data) {
-    ESP_LOGW(TAG, "Reset triggered via GPIO %i. Resetting settings and rebooting", DB_RESET_PIN);
-    DB_RADIO_MODE_DESIGNATED = DB_WIFI_MODE_AP;  // do not directly change DB_RADIO_MODE since it is not safe and constantly processed by other tasks. Save settings and reboot will assign DB_RADIO_MODE_DESIGNATED to DB_RADIO_MODE.
-    strncpy((char *) DB_WIFI_SSID, "DroneBridge for ESP32", sizeof(DB_WIFI_SSID) - 1);
-    strncpy((char *) DB_WIFI_PWD, "dronebridge", sizeof(DB_WIFI_PWD) - 1);
-    strncpy(DEFAULT_AP_IP, "192.168.2.1", sizeof(DEFAULT_AP_IP) - 1);
-    memset(DB_STATIC_STA_IP, 0, strlen(DB_STATIC_STA_IP));
-    memset(DB_STATIC_STA_IP_GW, 0, strlen(DB_STATIC_STA_IP_GW));
-    memset(DB_STATIC_STA_IP_NETMASK, 0, strlen(DB_STATIC_STA_IP_NETMASK));
-    DB_WIFI_CHANNEL = 6;
-    DB_WIFI_EN_GN = 0;
-    DB_UART_PIN_TX = DB_DEFAULT_UART_TX_PIN;
-    DB_UART_PIN_RX = DB_DEFAULT_UART_RX_PIN;
-    DB_UART_PIN_CTS = DB_DEFAULT_UART_CTS_PIN;
-    DB_UART_PIN_RTS = DB_DEFAULT_UART_RTS_PIN; //
-    DB_UART_BAUD_RATE = DB_DEFAULT_UART_BAUD_RATE;
-    DB_SERIAL_PROTOCOL = DB_SERIAL_PROTOCOL_MAVLINK;
-    DB_DISABLE_RADIO_ARMED = false;
-    DB_TRANS_BUF_SIZE = 128;
-    DB_UART_RTS_THRESH = 64;
-    DB_EN_EXT_ANT = false; // on-board antenna by default
-    DB_SERIAL_READ_TIMEOUT_MS = DB_SERIAL_READ_TIMEOUT_MS_DEFAULT;
+void long_press_callback(void *arg,void *usr_data) {
+    DB_RADIO_MODE_DESIGNATED = DB_WIFI_MODE_STA;  // do not directly change DB_WIFI_MODE since it is not safe and constantly processed by other tasks. Save settings and reboot will assign DB_WIFI_MODE_DESIGNATED to DB_WIFI_MODE.
+    strncpy((char *) DB_WIFI_SSID, DB_DEFAULT_WIFI_SSID, sizeof(DB_WIFI_SSID) - 1);
+    strncpy((char *) DB_WIFI_PWD, DB_DEFAULT_WIFI_PWD, sizeof(DB_WIFI_PWD) - 1);
     db_write_settings_to_nvs();
     esp_restart();
 }
-
 /**
  * Setup boot button GPIO to reset entire ESP32 settings and to force a reboot of the system
  */
 void set_reset_trigger() {
-    button_config_t gpio_btn_cfg = {
-            .type = BUTTON_TYPE_GPIO,
+    const button_config_t btn_cfg = {
             .long_press_time = CONFIG_BUTTON_LONG_PRESS_TIME_MS,
             .short_press_time = CONFIG_BUTTON_SHORT_PRESS_TIME_MS,
-            .gpio_button_config = {
-                    .gpio_num = DB_RESET_PIN,
-                    .active_level = 0,
-            },
     };
-    button_handle_t gpio_btn = iot_button_create(&gpio_btn_cfg);
-    if (NULL == gpio_btn) {
+    const button_gpio_config_t btn_gpio_cfg = {
+            .gpio_num = DB_RESET_PIN,
+            .active_level = 0,
+    };
+    button_handle_t gpio_btn = NULL;
+    if (iot_button_new_gpio_device(&btn_cfg, &btn_gpio_cfg, &gpio_btn) != ESP_OK || NULL == gpio_btn) {
         ESP_LOGE(TAG, "Creating reset button failed");
     } else {
-        iot_button_register_cb(gpio_btn, BUTTON_SINGLE_CLICK, short_press_callback, NULL);
-        iot_button_register_cb(gpio_btn, BUTTON_LONG_PRESS_UP, long_press_callback, NULL);
+        iot_button_register_cb(gpio_btn, BUTTON_SINGLE_CLICK, NULL, short_press_callback, NULL);
+        iot_button_register_cb(gpio_btn, BUTTON_LONG_PRESS_UP, NULL, long_press_callback, NULL);
     }
 }
 

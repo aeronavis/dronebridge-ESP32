@@ -1,0 +1,4 @@
+# ESP32-C61: UART0 (GPIO 11 TX / GPIO 10 RX) carries MAVLink to the flight controller,
+# so the debug console goes to the native USB-Serial-JTAG port (GPIO 12/13) instead
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
