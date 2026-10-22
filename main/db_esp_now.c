@@ -26,6 +26,7 @@
 #include <freertos/timers.h>
 #include <string.h>
 #include <esp_crc.h>
+#include <esp_idf_version.h>
 #include <mbedtls/gcm.h>
 #include <mbedtls/md.h>
 #include <mbedtls/pkcs5.h>
@@ -373,7 +374,12 @@ void db_espnow_process_rcv_data(uint8_t *data, uint16_t data_len, uint8_t *src_a
  * So, it is recommended that sending the next ESP-NOW data after the sending callback function of the previous sending
  * has returned.
  */
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+static void db_espnow_send_callback(const esp_now_send_info_t *tx_info, esp_now_send_status_t status) {
+    const uint8_t *mac_addr = (tx_info != NULL) ? tx_info->des_addr : NULL;
+#else
 static void db_espnow_send_callback(const uint8_t *mac_addr, esp_now_send_status_t status) {
+#endif
     if (mac_addr == NULL) {
         ESP_LOGE(TAG, "Send callback arg error");
         return;
