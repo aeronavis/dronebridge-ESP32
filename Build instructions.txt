@@ -1,0 +1,49 @@
+DroneBridge for ESP32 2.1.0 (LightX) - build instructions for ESP32-C3
+======================================================================
+
+Branch ESP32-C3 = DroneBridge v2.1.0 (tag c05592d) + LightX changes.
+
+Toolchain (tested)
+  ESP-IDF   : v5.5.6
+  Python    : 3.12 (3.12.10)   - ESP-IDF 5.5 does NOT support Python 3.14
+  Compiler  : riscv32-esp-elf-gcc 14.2.0 (installed by ESP-IDF)
+  CMake     : 3.30.2, Ninja 1.12.1 (installed by ESP-IDF)
+  Node.js   : v26.7.0 with npm 11.19.0 - builds the web interface (www.bin)
+  Git       : needed for the submodules and the ESP-IDF component manager (internet access on first build)
+
+  Do NOT use ESP-IDF 6.x: mbedTLS 4 / cJSON / GCC 16 break DroneBridge 2.1.0.
+
+1. Get the code (with submodules fastmavlink and pymavlink)
+     git clone --recursive -b ESP32-C3 https://github.com/aeronavis/dronebridge-ESP32.git
+   Already cloned without --recursive:
+     git submodule update --init
+
+2. Wi-Fi credentials (not in git)
+   Copy main/db_credentials.h.example to main/db_credentials.h and set
+   DB_DEFAULT_WIFI_SSID and DB_DEFAULT_WIFI_PWD.
+   Without this file the build warns and uses the DroneBridge defaults
+   ("DroneBridge for ESP32" / "dronebridge").
+
+3. Build (PowerShell, ESP-IDF 5.5.6 environment active, Python 3.12 on PATH)
+     cd dronebridge-ESP32
+     idf.py build
+   The committed sdkconfig is already set for esp32c3 - do not run set-target
+   (it would replace sdkconfig).
+
+4. Flash (2 MB flash, DIO, 80 MHz)
+     idf.py -p COMx flash
+   or with esptool:
+     python -m esptool --chip esp32c3 -p COMx -b 460800 --before default_reset --after hard_reset write_flash --flash_mode dio --flash_size 2MB --flash_freq 80m 0x0 build\bootloader\bootloader.bin 0x8000 build\partition_table\partition-table.bin 0x10000 build\db_esp32.bin 0x190000 build\www.bin
+   First flash / coming from another firmware: erase first
+     python -m esptool --chip esp32c3 -p COMx erase_flash
+
+Settings in this build
+  - Wi-Fi station mode with the credentials from main/db_credentials.h
+  - UART to flight controller: TX = GPIO21, RX = GPIO20, 115200 baud, MAVLink
+  - Debug console on UART0 at 115200
+  - Skybrush support (UDP 14555) enabled
+  - BOOT button (GPIO9): short press = station mode with default credentials,
+    long press = reset Wi-Fi mode, SSID and password, then reboot
+
+Notes
+  - Flashing does not burn eFuses (secure boot and flash encryption are off). Never run espefuse.
